@@ -1,0 +1,459 @@
+Create a foundational options trading engine within my existing Spring Boot WebFlux application. The initial goal is to implement a **Bull Call Spread** strategy as a prototype, but the architecture must be extensible to support all provided strategy types (Tier 1: Iron Condor, Straddles; Tier 2: VWAP; Tier 3: ML integration).
+
+**1. Core Architecture Components:**
+
+   a. **Strategy Interface:** Create a generic `OptionStrategy` interface with methods:
+      - `Mono<StrategyDefinition> initialize(StrategyConfig config)`
+      - `Flux<TradingSignal> evaluate(MarketDataSnapshot snapshot, PortfolioHoldings holdings)`
+      - `Mono<Void> shutdown()`
+
+   b. **Strategy Registry:** A `StrategyRegistryService` that dynamically loads and manages instances of all strategies. It should allow for starting/stopping strategies by a unique ID.
+
+   c. **Market Data Orchestrator:** A `OptionsDataService` that:
+        - Subscribes to the underlying stock price feed (e.g., NIFTY, RELIANCE).
+        - On each tick, fetches the latest Options Chain (LTP, Greeks, IV) for that underlying from a data provider (e.g., Kafka topic with pre-processed data).
+        - Builds a consolidated `MarketDataSnapshot` object containing all relevant data for strategies to consume.
+
+   d. **Order Management System (OMS) Bridge:** A `OrderManagementService` that translates a generic `TradingSignal` (e.g., "ENTER_BULL_CALL_SPREAD") into a specific, multi-legged FIX API or exchange API order request. It handles the complexity of leg execution.
+
+**2. Bull Call Spread Implementation:**
+
+   Create `BullCallSpreadStrategy` that implements the `OptionStrategy` interface.
+
+   **Strategy Config (`StrategyConfig` for this strategy):**
+
+   {
+"strategyName": "BullCallSpread",
+"underlyingSymbol": "NIFTY",
+"expiry": "weekly", // or "monthly"
+"buyStrike": 19500,
+"sellStrike": 19600,
+"lotSize": 50,
+"maxCapital": 25000, // (19600-19500) * 50 = ₹5000 per lot
+"exitCondition": "PROFIT_TARGET_80" // Exit at 80% of max profit
+}
+
+
+**Logic in `evaluate()` method:**
+- **Entry:** If no position exists, check if the current underlying price is above a technical level (e.g., 20-EMA). If true, generate an `ENTER` signal.
+- **Exit:** If a position exists, calculate the current PnL as a percentage of max profit. If PnL >= 80%, generate an `EXIT` signal.
+
+**The `TradingSignal` object should contain:**
+- action: ENTER | EXIT | ADJUST
+- strategyId
+- legs: List of {optionSymbol, quantity, action(BUY/SELL)}
+- orderType: MARKET / LIMIT
+- limitPrice: (calculated based on current market spread)
+
+**3. Integration with Existing Services:**
+
+- **Auth:** Pass JWT token for order placement API calls.
+- **Portfolio Service:** Check `PortfolioHoldings` to see if the strategy already has an active position before generating a new ENTER signal.
+- **Risk Service:** Before sending an order, the `OrderManagementService` must call the `RiskService` to validate:
+     - Does this trade exceed per-strategy capital allocation?
+     - Does it exceed overall portfolio risk limits?
+     - Is the strategy within its daily trade limit?
+
+**4. Monitoring & Persistence:**
+
+- Every `TradingSignal` and resulting order must be persisted to the database with a status (GENERATED, SENT, FILLED, REJECTED).
+- Emit metrics for each strategy: `strategy.{id}.pnl`, `strategy.{id}.position.greek.delta`, etc.
+
+**5. Production Requirements:**
+
+- The entire flow must be reactive and non-blocking. Use WebClient for external API calls to market data and brokerage APIs.
+- Provide robust error handling. If one leg of a spread fails to fill, the strategy must have a contingency plan (e.g., attempt to cancel the other legs, enter a state for manual intervention).
+- Make all parameters (technical levels, profit targets) configurable via the database without code changes.
+
+Provide the code for the `OptionStrategy` interface, the `BullCallSpreadStrategy` class, the `StrategyRegistryService`, and the `OptionsDataService` outline. Focus on the reactive streams and integration points.
+
+Next Prompt: Phase 2 - Multi-Strategy Engine & Advanced Features:
+
+Based on the existing Spring Boot WebFlux options trading engine with the `BullCallSpreadStrategy` prototype, now extend the system to be a production-ready, multi-strategy platform.
+
+**1. Implement a Second, More Complex Strategy: Iron Condor**
+
+   Create `IronCondorStrategy` that implements the `OptionStrategy` interface. This will test the architecture's ability to handle four-legged orders.
+
+   **Strategy Config for Iron Condor:**
+
+   {
+"strategyName": "IronCondor",
+"underlyingSymbol": "BANKNIFTY",
+"expiry": "weekly",
+"shortCallStrike": 46000,
+"longCallStrike": 46200,
+"shortPutStrike": 45400,
+"longPutStrike": 45200,
+"lotSize": 25,
+"maxCapital": 30000, // ( (46200-46000) + (45400-45200) ) * 25 = ₹10,000 risk per lot
+"profitTarget": 0.50, // Close at 50% of max profit
+"maxLossExit": true // Exit if loss exceeds 90% of max loss
+}
+
+
+**Logic in `evaluate()` method:**
+- **Entry:** Generate an `ENTER` signal if implied volatility is above its 20-day historical average (volatility is expensive, good for selling) and the underlying price is between the short strikes.
+- **Exit Conditions:** Generate an `EXIT` signal if:
+     *   PnL reaches 50% of max profit.
+     *   PnL loss exceeds 90% of max loss.
+     *   The Delta of the position exceeds a configured threshold (e.g., |0.30|), indicating the underlying is moving too close to a short strike.
+
+**2. Enhance the Order Management System (OMS) Bridge:**
+
+The current `OrderManagementService` must be upgraded to handle:
+- **Multi-Legged Order Execution:** It should attempt to execute all legs of a strategy (e.g., all 4 for an Iron Condor) as a single basket/package order via the broker API if supported, to avoid legging risk.
+- **Order State Management:** Implement a state machine for each strategy's order (`PENDING_ENTRY`, `ENTERED`, `PENDING_EXIT`, `EXITED`, `ERROR`). Persist this state to a database (e.g., PostgreSQL).
+- **Order Lifecycle Hooks:** Add `@Retryable` and circuit breaker patterns for API calls to the broker. If an order fails, it should retry with exponential backoff before marking it as `ERROR`.
+
+**3. Create a Strategy Management REST API:**
+
+Build a set of reactive REST endpoints (`@RestController`) to manage strategies externally (e.g., from a frontend UI):
+- `POST /api/strategies`: Deploy a new strategy instance. Body accepts `StrategyConfig`.
+- `GET /api/strategies`: List all running strategies and their current state (P/L, status, Greeks).
+- `POST /api/strategies/{strategyId}/pause`: Pause a strategy (stop it from generating new signals without closing its position).
+- `POST /api/strategies/{strategyId}/resume`: Resume a paused strategy.
+- `DELETE /api/strategies/{strategyId}`: Shut down a strategy and close its position (generate an `EXIT` signal).
+
+**4. Implement Real-Time Dashboard Streaming:**
+
+Create a new WebSocket endpoint (`/ws/dashboard`) that:
+- Broadcasts a `StrategyUpdateDTO` every time any strategy's state changes (new signal, order fill, PnL update).
+- This allows a frontend to have a live, updating view of the entire system's performance.
+
+**5. Data Service Enhancement:**
+
+Enhance the `OptionsDataService` to pre-calculate and cache common derived data points needed by multiple strategies to avoid redundant calculations:
+- 20-day Historical Volatility for the underlying.
+- Current Implied Volatility Percentile for each option chain.
+- Key technical levels (support/resistance) for the underlying.
+
+**6. Integration Requirements:**
+
+- All new database operations (saving order state, strategy config) must use reactive Spring Data R2DBC with PostgreSQL.
+- The management API must be secured using the existing JWT-based authentication. Only authenticated users can control strategies.
+- The strategy lifecycle (initialize -> evaluate -> shutdown) must be tightly integrated with the `StrategyRegistryService`.
+
+**Deliverables:**
+
+1.  Complete `IronCondorStrategy.java` class.
+2.  Enhanced `OrderManagementService.java` with state persistence and retry logic.
+3.  `StrategyController.java` with the reactive REST API endpoints.
+4.  `DashboardWebSocketHandler.java` for broadcasting updates.
+5.  Updated `StrategyRegistryService.java` to support the new pause/resume lifecycle.
+6.  Relevant Reactive Repository interfaces for `StrategyState` and `OrderEntity`.
+
+Focus on maintaining a non-blocking, reactive architecture throughout all new components. Provide the code with detailed comments.
+
+Next Prompt: Phase 3:- Predictive Model Integration & Adaptive Risk:
+
+Based on the production-ready multi-strategy options trading engine (with Bull Call Spread and Iron Condor implemented), we now move to Phase 3: integrating predictive Machine Learning models to enhance strategy decision-making and implementing a dynamic, adaptive risk management system.
+
+**1. Integrate a Predictive ML Model (Random Forest Classifier):**
+
+   **Objective:** Use a trained ML model to predict the probability of profit (POP) for a strategy entry signal before executing.
+
+   **Create an `MLPredictionService`:**
+   - This service should expose a reactive method: `Mono<PredictionResult> predictProbabilityOfProfit(StrategyType strategyType, MarketDataSnapshot snapshot, StrategyConfig config)`.
+   - The method should:
+        a. **Feature Engineering:** Extract and transform relevant features from the `MarketDataSnapshot` and `StrategyConfig` into a feature vector. Key features for an Iron Condor might include:
+            - Implied Volatility Percentile of the underlying
+            - Distance of underlying price to short strikes (normalized by ATR)
+            - Volatility Skew (difference in IV between put and call sides)
+            - Term Structure slope
+            - Risk-Free Interest Rate
+            - Days to Expiry
+            - Historical Volatility / Implied Volatility ratio
+
+        b. **Model Inference:** Call a pre-trained Random Forest model (assumed to be served via a TensorFlow Serving API or ONNX Runtime) with the feature vector to get a prediction.
+        c. **Return Result:** Return a `PredictionResult` object containing the predicted probability of profit (e.g., 0.72) and a confidence score.
+
+   **Modify Strategy Evaluation:** Enhance the `evaluate()` method in `IronCondorStrategy` and other strategies.
+   - **Before Entry:** If the entry conditions are met, call the `MLPredictionService`.
+   - **ML Gate:** Only generate the `ENTER` signal if `predictedProbabilityOfProfit > threshold` (e.g., 0.65) AND `confidenceScore > threshold` (e.g., 0.8).
+   - **Logging:** Log the prediction details for every potential trade for later model retraining and analysis.
+
+**2. Implement Dynamic, Adaptive Risk Management:**
+
+   **Objective:** Move from static capital allocation to a risk-based allocation that adjusts to market conditions and model confidence.
+
+   **Create a `DynamicRiskManagerService`:**
+   - This service should decide the capital allocation (`positionSize`) for a new strategy entry signal.
+   - It should implement the Kelly Criterion or a fractional Kelly formula for position sizing:
+        `f* = (p * b - (1 - p)) / b`
+        where:
+        - `p` = predicted probability of profit (from ML model)
+        - `b` = odds received (max profit / max loss) for the strategy
+   - The service must also enforce maximum portfolio-level risk limits (e.g., total portfolio Vega or Delta cannot exceed a threshold). It should reduce position sizes to stay within these limits.
+   - The final allocated position size should be: `min(staticMaxCapital, kellySizedCapital, riskLimitSizedCapital)`.
+
+   **Integration:** The `OrderManagementService` must consult the `DynamicRiskManagerService` to determine the final `lotSize` for any `ENTER` signal before sending the order to the broker.
+
+**3. Create a Model Performance Feedback Loop:**
+
+   **Objective:** Continuously improve the ML model by tracking the accuracy of its predictions.
+
+   **Implement a `TradeOutcomeService`:**
+   - For every strategy that enters a position based on an ML prediction, record the prediction (features, predicted POP) and the actual outcome (realized PnL) when the position is closed.
+   - Store this data in a time-series database (e.g., TimescaleDB) for analysis.
+   - Provide an endpoint to generate a report of the model's accuracy (Brier score, ROC curve) over time.
+   - This data must be used to periodically retrain and improve the ML model.
+
+**4. Enhanced Market Data for ML:**
+
+   **Upgrade the `OptionsDataService`:** Ensure it provides all the necessary data for feature engineering:
+   - Full volatility surface data (not just the ATM volatility).
+   - Historical realized volatility calculations.
+   - Risk-free rate data (e.g., from government bonds).
+
+**5. Failure Mode Handling:**
+
+   - The system must gracefully degrade if the ML model serving API is unavailable. Implement a circuit breaker and fallback logic (e.g., use a simpler heuristic rule if the model is down).
+   - All ML calls must have strict timeouts to prevent blocking the reactive streams.
+
+**Deliverables:**
+
+   1.  `MLPredictionService.java`: The reactive service for making model inference calls.
+   2.  `DynamicRiskManagerService.java`: The service for calculating adaptive position sizes using the Kelly Criterion.
+   3.  `TradeOutcomeService.java`: The service for recording predictions and outcomes for model retraining.
+   4.  Updates to `IronCondorStrategy.java` and other strategies to integrate the ML prediction gate.
+   5.  Updates to `OrderManagementService.java` to use the dynamic risk manager.
+   6.  Example feature vector construction logic for the Iron Condor strategy.
+
+Focus on maintaining non-blocking HTTP calls to the ML model server using WebClient. Provide the code with detailed comments.
+
+Based on our existing intelligent options trading engine (with ML integration and adaptive risk management), we now enter Phase 4: Advanced Execution & Optimization. The goal is to minimize transaction costs, maximize fill quality, and optimize execution performance, which are critical for profitability at scale.
+
+**1. Implement a Smart Order Router (SOR):**
+
+   Create a `SmartOrderRouterService` that decides the best execution venue for each order.
+
+   **Requirements:**
+   - The service must maintain real-time connectivity metrics (latency, uptime) to multiple broker APIs (e.g., Broker_A, Broker_B).
+   - It must consume a live feed of liquidity (order book depth) for the same instrument from different brokers.
+   - **Routing Logic:** For a given option contract, the SOR should evaluate:
+        - **Best Bid/Offer (BBO):** Which broker has the tightest spread?
+        - **Available Depth:** Which broker has sufficient volume at the best price?
+        - **Fee Structure:** Which broker has the lowest transaction fees for this order type?
+        - **Historical Fill Rate:** Which broker has the highest fill rate for similar orders?
+   - The service should make a routing decision in milliseconds and return the optimal `BrokerEndpoint` for an order.
+
+   **Interface:** `Mono<BrokerEndpoint> getOptimalBroker(OptionContract contract, OrderType orderType, int quantity)`
+
+**2. Enhance Order Management with Execution Algorithms:**
+
+   Upgrade the `OrderManagementService` to support advanced execution styles beyond simple MARKET and LIMIT orders.
+
+   **Implement a `OrderSlicingAlgorithm` interface with strategies:**
+   - `VWAPAlgorithm`: Slices a large order proportionally to the historical volume curve of the trading day.
+   - `TWAPAlgorithm`: Slices an order into equal parts over a specified time interval.
+   - `ImplementationShortfallAlgorithm`: A more sophisticated algo that dynamically balances market impact vs. opportunity cost. It adjusts slicing aggressiveness based on real-time market volatility and the alpha decay of the signal.
+
+   **Integration:** The OMS should, for large orders, use these algorithms to break a parent order into multiple child orders and manage their execution lifecycle.
+
+**3. Options-Specific Execution Logic:**
+
+   Create a `SpreadExecutionService` specifically for complex multi-legged strategies.
+
+   **Requirements:**
+   - **Legging Logic:** For brokers that don't support native multi-leg orders, this service must manage the risky process of "legging in" by executing each leg sequentially.
+        - It must use sophisticated hedging to manage the interim risk.
+        - It must have contingency plans for partial fills (e.g., if 3 of 4 Iron Condor legs fill, immediately try to cancel the 4th or execute a hedge).
+   - **Spread Pricing Model:** Calculate a theoretical fair value for the entire spread. The service should only place limit orders for the legs if the available market prices imply a credit that meets or exceeds this fair value.
+   - **Patience Algorithm:** Instead of crossing the spread, the service should place orders at the mid-price or better and wait, re-pricing them based on a configurable strategy to improve fill quality.
+
+**4. Transaction Cost Analysis (TCA) Module:**
+
+   Create a `TCAService` to measure execution quality and provide feedback to the SOR and execution algorithms.
+
+   **Requirements:**
+   - For every filled order, calculate:
+        - **Slippage:** Difference between the execution price and the arrival price (price when signal was generated).
+        - **Implementation Shortfall:** Total cost of execution including commissions, fees, and slippage.
+   - Store this data and generate performance reports comparing the effectiveness of different brokers and execution algorithms.
+   - Use this data to continuously optimize the SOR's routing logic and the aggressiveness of the execution algorithms.
+
+**5. Latency Monitoring & Optimization:**
+
+   Create a `LatencyMonitoringService` that injects timestamped heartbeat messages into every stage of the trading pipeline:
+   - Signal Generation -> Order Sent -> Order Ack -> Order Fill.
+   - Measure and track the 99th percentile (p99) latency for each stage.
+   - Identify and alert on latency outliers or degradation.
+
+**Integration Points:**
+- The `SmartOrderRouterService` must be consulted by the `OrderManagementService` before any order is placed.
+- The `SpreadExecutionService` must be used by the OMS for any strategy signal with `legs.size() > 1`.
+- The `TCAService` must be called on every `OrderFilled` event.
+- All services must maintain a reactive, non-blocking architecture. Use caching and in-memory data structures for latency-sensitive components like the SOR.
+
+**Deliverables:**
+1.  `SmartOrderRouterService.java`
+2.  `VWAPAlgorithm.java`, `TWAPAlgorithm.java`, `ImplementationShortfallAlgorithm.java`
+3.  `SpreadExecutionService.java`
+4.  `TCAService.java`
+5.  `LatencyMonitoringService.java`
+6.  Significant enhancements to the `OrderManagementService` to integrate these new components.
+
+Provide the complete code with a focus on low-latency patterns and real-time decision-making.
+
+
+
+Create a "Meta-Strategy" layer that acts as a portfolio manager for all other strategies.
+
+This component should:
+1.  Continuously evaluate the performance and Sharpe ratio of every running strategy.
+2.  Dynamically allocate capital away from underperforming strategies and towards outperforming ones, based on modern portfolio theory (MPT) to maximize the overall portfolio's risk-adjusted returns.
+3.  Automatically generate and backtest new strategy ideas by combining indicators, parameters, and option structures from a predefined library.
+4.  If a new synthetic strategy passes rigorous out-of-sample backtests and paper trading, propose it for a small live capital allocation.
+
+The system should require minimal human input, only intervening for extreme risk events or fundamental shifts in market structure that cannot be learned from data alone.
+
+
+Based on our completed multi-phase algorithmic trading engine (Phases 1-4), we now enter Phase 5: implementing a comprehensive management UI and real-time dashboard. The goal is to provide complete visibility and control over all strategies through a web interface.
+
+**1. Create a Reactive REST API for UI Integration:**
+
+   Build a complete set of `@RestController` endpoints that expose all management functionality:
+
+   **Strategy Management Endpoints:**
+   - `GET /api/strategies`: List all available strategy templates (BullCallSpread, IronCondor, etc.) with their config parameters
+   - `POST /api/strategies/instances`: Deploy a new strategy instance (accepts `StrategyConfig` JSON)
+   - `GET /api/strategies/instances`: List all running strategy instances with current status
+   - `GET /api/strategies/instances/{id}`: Get detailed state of a specific strategy
+   - `PUT /api/strategies/instances/{id}/config`: Update strategy parameters in real-time
+   - `POST /api/strategies/instances/{id}/pause`: Pause strategy signal generation
+   - `POST /api/strategies/instances/{id}/resume`: Resume strategy
+   - `DELETE /api/strategies/instances/{id}`: Shutdown strategy and close positions
+
+   **Monitoring Endpoints:**
+   - `GET /api/performance/strategy/{id}`: Get historical P&L and performance metrics
+   - `GET /api/performance/portfolio`: Get overall portfolio performance
+   - `GET /api/risk/exposure`: Get current risk exposure across all strategies
+
+**2. Implement Real-Time WebSocket Dashboard:**
+
+   Create a powerful WebSocket endpoint `/ws/dashboard` that streams:
+
+   **Strategy Events Stream:**
+   - Real-time P&L updates for every strategy
+   - Position changes and order executions
+   - Strategy state transitions (RUNNING -> PAUSED -> etc.)
+   - Risk limit alerts and system events
+
+   **Market Data Stream:**
+   - Underlying price changes for tracked symbols
+   - Volatility surface updates
+   - Key greeks (Delta, Gamma, Theta) for positions
+
+   **Performance Data Stream:**
+   - Live updating equity curve
+   - Drawdown calculations
+   - Sharpe ratio and other performance metrics
+
+**3. Create Comprehensive Data Models for UI:**
+
+   Design detailed DTOs (Data Transfer Objects) for the UI:
+
+   ```java
+   // Strategy Instance DTO
+   record StrategyInstanceDTO(
+       String id,
+       String name,
+       String symbol,
+       StrategyStatus status, // RUNNING, PAUSED, STOPPED
+       double currentPnl,
+       double unrealizedPnl,
+       double realizedPnl,
+       LocalDateTime startedAt,
+       Map<String, Double> currentGreeks, // Delta, Gamma, Theta, Vega
+       StrategyConfig config,
+       List<PositionDTO> openPositions
+   ) {}
+
+   // Performance History DTO
+   record PerformanceSnapshotDTO(
+       Instant timestamp,
+       double equity,
+       double dailyPnl,
+       Map<String, Double> strategyPerformance
+   ) {}
+
+   4. Build Performance Analytics Service:
+
+Create a PerformanceAnalyticsService that:
+
+Calculates real-time P&L for every strategy by:
+
+Marking open positions to market using live prices
+
+Adding realized P&L from closed trades
+
+Computes performance metrics:
+
+Sharpe Ratio, Sortino Ratio
+
+Maximum Drawdown
+
+Win rate and profit factor
+
+Daily/monthly returns
+
+Maintains historical equity curve data
+
+5. Implement UI Control Integration:
+
+Enhance existing services to support UI controls:
+
+Modify the StrategyRegistryService to accept runtime parameter changes
+
+Ensure all state changes are persisted and broadcast via WebSocket
+
+Add validation to prevent unsafe parameter changes during live trading
+
+6. Security & Authorization:
+
+Secure all endpoints with JWT authentication and add role-based access:
+
+READ_ONLY: Can view dashboard but not modify
+
+TRADER: Can deploy/pause strategies
+
+ADMIN: Full control including risk limits
+
+7. Real-Time Alerting System:
+
+Create an AlertService that triggers UI notifications for:
+
+Strategy P&L exceeding thresholds
+
+Risk limit breaches
+
+System errors and connectivity issues
+
+Margin calls or account warnings
+
+Technical Requirements:
+
+All REST endpoints must be fully reactive using Spring WebFlux
+
+WebSocket implementation must handle backpressure and multiple concurrent connections
+
+Performance calculations must be efficient and non-blocking
+
+Use Project Reactor's Sinks to broadcast updates to connected UI clients
+
+Integrate with existing services: StrategyRegistryService, OrderManagementService, RiskService, PortfolioService
+
+Deliverables:
+
+Complete set of REST controllers with all endpoints
+
+DashboardWebSocketHandler.java for real-time updates
+
+PerformanceAnalyticsService.java for P&L calculation
+
+AlertService.java for notifications
+
+All necessary DTOs and data models
+
+Updates to existing services to support UI integration

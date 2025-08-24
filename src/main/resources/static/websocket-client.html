@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Client</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #messages { border: 1px solid #ccc; height: 300px; overflow-y: scroll; padding: 10px; margin: 10px 0; }
+        .message { margin: 5px 0; padding: 5px; border-radius: 3px; }
+        .system { background-color: #e3f2fd; }
+        .error { background-color: #ffebee; color: #c62828; }
+        .chat { background-color: #f3e5f5; }
+        .notification { background-color: #e8f5e8; }
+        input, button { margin: 5px; padding: 8px; }
+        #tokenInput { width: 400px; }
+        #messageInput { width: 300px; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Chat Client</h1>
+    
+    <div>
+        <input type="text" id="tokenInput" placeholder="Enter your JWT token here" />
+        <button onclick="connect()">Connect</button>
+        <button onclick="disconnect()">Disconnect</button>
+    </div>
+    
+    <div id="messages"></div>
+    
+    <div>
+        <input type="text" id="messageInput" placeholder="Type your message..." onkeypress="handleKeyPress(event)" />
+        <button onclick="sendMessage()">Send Message</button>
+    </div>
+    
+    <div>
+        <p>Status: <span id="status">Disconnected</span></p>
+    </div>
+
+    <script>
+        let socket = null;
+        let connected = false;
+
+        function connect() {
+            const token = document.getElementById('tokenInput').value.trim();
+            if (!token) {
+                alert('Please enter a JWT token');
+                return;
+            }
+
+            if (socket) {
+                socket.close();
+            }
+
+            const wsUrl = `ws://localhost:8080/ws/chat`;
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = function(event) {
+                console.log('WebSocket connected');
+                document.getElementById('status').textContent = 'Connecting...';
+                
+                // Send authentication message
+                const authMessage = {
+                    userToken: token,
+                    message: "authenticate"
+                };
+                socket.send(JSON.stringify(authMessage));
+            };
+
+            socket.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                displayMessage(message);
+                
+                if (message.type === 'SYSTEM' && message.content === 'Connected successfully') {
+                    connected = true;
+                    document.getElementById('status').textContent = 'Connected';
+                } else if (message.type === 'ERROR') {
+                    connected = false;
+                    document.getElementById('status').textContent = 'Error: ' + message.content;
+                }
+            };
+
+            socket.onclose = function(event) {
+                console.log('WebSocket disconnected');
+                connected = false;
+                document.getElementById('status').textContent = 'Disconnected';
+            };
+
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                document.getElementById('status').textContent = 'Connection Error';
+            };
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.close();
+                socket = null;
+                connected = false;
+                document.getElementById('status').textContent = 'Disconnected';
+            }
+        }
+
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value.trim();
+            
+            if (!message) {
+                alert('Please enter a message');
+                return;
+            }
+            
+            if (!connected || !socket) {
+                alert('Not connected to WebSocket');
+                return;
+            }
+
+            socket.send(message);
+            messageInput.value = '';
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function displayMessage(message) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${message.type.toLowerCase()}`;
+            
+            const timestamp = new Date(message.timestamp).toLocaleTimeString();
+            messageDiv.innerHTML = `
+                <strong>[${timestamp}] ${message.senderName}:</strong> ${message.content}
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+    </script>
+</body>
+</html>

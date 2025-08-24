@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Strategy Management Client</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .signals { height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; }
+        .signal { margin: 5px 0; padding: 5px; border-radius: 3px; }
+        .buy { background-color: #e8f5e8; }
+        .sell { background-color: #ffebee; }
+        input, select, button { margin: 5px; padding: 8px; }
+        .strategy-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        #status { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Strategy Management System</h1>
+        
+        <div class="section">
+            <h2>Connection Status</h2>
+            <p>Status: <span id="status">Disconnected</span></p>
+            <input type="text" id="tokenInput" placeholder="Enter JWT token" style="width: 400px;" />
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+        </div>
+
+        <div class="section">
+            <h2>Deploy Strategy</h2>
+            <div class="strategy-form">
+                <input type="text" id="strategyId" placeholder="Strategy ID" />
+                <select id="strategyType">
+                    <option value="MOVING_AVERAGE_CROSSOVER">Moving Average Crossover</option>
+                    <option value="RSI_STRATEGY">RSI Strategy</option>
+                    <option value="MACD_STRATEGY">MACD Strategy</option>
+                    <option value="BREAKOUT_STRATEGY">Breakout Strategy</option>
+                </select>
+                <input type="text" id="symbol" placeholder="Symbol (e.g., BTC/USDT)" />
+                <input type="number" id="quantity" placeholder="Quantity" step="0.01" />
+                <input type="number" id="fastMA" placeholder="Fast MA (for MA strategy)" />
+                <input type="number" id="slowMA" placeholder="Slow MA (for MA strategy)" />
+                <input type="number" id="stopLoss" placeholder="Stop Loss %" step="0.1" />
+                <input type="number" id="takeProfit" placeholder="Take Profit %" step="0.1" />
+            </div>
+            <button onclick="deployStrategy()">Deploy Strategy</button>
+            <button onclick="updateStrategy()">Update Strategy</button>
+            <button onclick="deactivateStrategy()">Deactivate Strategy</button>
+        </div>
+
+        <div class="section">
+            <h2>Live Signals</h2>
+            <div id="signals" class="signals"></div>
+        </div>
+
+        <div class="section">
+            <h2>Performance Metrics</h2>
+            <button onclick="getPerformance()">Refresh Performance</button>
+            <div id="performance"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let connected = false;
+
+        function connect() {
+            const token = document.getElementById('tokenInput').value.trim();
+            if (!token) {
+                alert('Please enter a JWT token');
+                return;
+            }
+
+            if (socket) {
+                socket.close();
+            }
+
+            socket = new WebSocket('ws://localhost:8080/ws/strategies');
+
+            socket.onopen = function(event) {
+                console.log('Strategy WebSocket connected');
+                document.getElementById('status').textContent = 'Connecting...';
+            };
+
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'deployed') {
+                    document.getElementById('status').textContent = 'Connected - Strategy Deployed';
+                    connected = true;
+                } else if (data.status === 'updated') {
+                    console.log('Strategy updated:', data.strategyId);
+                } else if (data.error) {
+                    document.getElementById('status').textContent = 'Error: ' + data.error;
+                    connected = false;
+                } else if (data.type) {
+                    // This is a trading signal
+                    displaySignal(data);
+                }
+            };
+
+            socket.onclose = function(event) {
+                console.log('Strategy WebSocket disconnected');
+                connected = false;
+                document.getElementById('status').textContent = 'Disconnected';
+            };
+
+            socket.onerror = function(error) {
+                console.error('Strategy WebSocket error:', error);
+                document.getElementById('status').textContent = 'Connection Error';
+            };
+        }
+
+        function deployStrategy() {
+            if (!connected && socket && socket.readyState === WebSocket.OPEN) {
+                // First message - deploy strategy
+                const config = createStrategyConfig();
+                socket.send(JSON.stringify(config));
+            } else if (connected) {
+                alert('Strategy already deployed. Use Update instead.');
+            } else {
+                alert('Not connected to WebSocket');
+            }
+        }
+
+        function updateStrategy() {
+            if (!connected || !socket) {
+                alert('Not connected to WebSocket');
+                return;
+            }
+
+            const config = createStrategyConfig();
+            socket.send(JSON.stringify(config));
+        }
+
+        function deactivateStrategy() {
+            const strategyId = document.getElementById('strategyId').value.trim();
+            if (!strategyId) {
+                alert('Please enter Strategy ID');
+                return;
+            }
+
+            fetch(`/api/strategies/${strategyId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Strategy deactivated:', data);
+                alert('Strategy deactivated: ' + strategyId);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to deactivate strategy');
+            });
+        }
+
+        function createStrategyConfig() {
+            const token = document.getElementById('tokenInput').value.trim();
+            const strategyType = document.getElementById('strategyType').value;
+            
+            const config = {
+                strategyId: document.getElementById('strategyId').value.trim(),
+                strategyType: strategyType,
+                symbol: document.getElementById('symbol').value.trim(),
+                userToken: token,
+                isActive: true,
+                parameters: {
+                    quantity: parseFloat(document.getElementById('quantity').value) || 0.1
+                }
+            };
+
+            // Add strategy-specific parameters
+            if (strategyType === 'MOVING_AVERAGE_CROSSOVER') {
+                config.parameters.fastMA = parseInt(document.getElementById('fastMA').value) || 50;
+                config.parameters.slowMA = parseInt(document.getElementById('slowMA').value) || 200;
+            }
+
+            const stopLoss = parseFloat(document.getElementById('stopLoss').value);
+            const takeProfit = parseFloat(document.getElementById('takeProfit').value);
+            
+            if (stopLoss) config.parameters.stopLoss = stopLoss;
+            if (takeProfit) config.parameters.takeProfit = takeProfit;
+
+            return config;
+        }
+
+        function displaySignal(signal) {
+            const signalsDiv = document.getElementById('signals');
+            const signalDiv = document.createElement('div');
+            signalDiv.className = `signal ${signal.type.toLowerCase()}`;
+            
+            const timestamp = new Date(signal.timestamp).toLocaleTimeString();
+            signalDiv.innerHTML = `
+                <strong>[${timestamp}] ${signal.type}</strong> ${signal.symbol} 
+                @ ${signal.price} (Qty: ${signal.quantity})
+                <br><small>Strategy: ${signal.strategyId} | Reason: ${signal.reason}</small>
+            `;
+            
+            signalsDiv.insertBefore(signalDiv, signalsDiv.firstChild);
+            
+            // Keep only last 50 signals
+            while (signalsDiv.children.length > 50) {
+                signalsDiv.removeChild(signalsDiv.lastChild);
+            }
+        }
+
+        function getPerformance() {
+            const token = document.getElementById('tokenInput').value.trim();
+            
+            fetch('/api/strategies/performance', {
+                headers: {
+                    'Authorization': 'Bearer ' + token
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('performance').innerHTML = `
+                    <h3>Performance Summary</h3>
+                    <p>Active Strategies: ${data.activeStrategies}</p>
+                    <p>Daily P&L: ${data.dailyPnL}</p>
+                    <p>Daily Trades: ${data.dailyTrades}</p>
+                    <p>Circuit Breaker: ${data.circuitBreakerTriggered ? 'TRIGGERED' : 'OK'}</p>
+                    <p>Subscribed Symbols: ${data.subscribedSymbols.join(', ')}</p>
+                    <pre>${JSON.stringify(data.strategies, null, 2)}</pre>
+                `;
+            })
+            .catch(error => {
+                console.error('Error fetching performance:', error);
+                document.getElementById('performance').innerHTML = 'Error loading performance data';
+            });
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.close();
+                socket = null;
+                connected = false;
+                document.getElementById('status').textContent = 'Disconnected';
+            }
+        }
+    </script>
+</body>
+</html>

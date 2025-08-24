@@ -1,0 +1,283 @@
+# Kotak Broker API Endpoints
+
+## Base URL
+http://localhost:8080/api/brokers/auth
+
+## Headers (Common for all APIs)
+Content-Type: application/json
+Accept: application/json
+
+---
+
+## 1. Login
+Endpoint: POST /login
+
+Request Payload:
+{
+  "apiKey": "your_api_key",
+  "apiSecret": "your_api_secret",
+  "clientId": "XVZAX",
+  "password": "your_password",
+  "phoneNumber": "9876543210",
+  "brokerCode": "KOTAK",
+  "username": "XVZAX",
+  "neoFinKey": "neotradeapi"
+}
+
+---
+
+## 2. Verify OTP
+Endpoint: POST /verifyotp
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_login",
+  "brokerCode": "KOTAK",
+  "otp": "123456"
+}
+
+---
+
+## 3. Broker Status
+Endpoint: POST /status
+
+Request Payload:
+{
+  "brokerCode": "KOTAK"
+}
+
+---
+
+## 4. Positions
+Endpoint: POST /positions
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK"
+}
+
+---
+
+## 5. Holdings
+Endpoint: POST /holdings
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK"
+}
+
+---
+
+## 6. Orders
+Endpoint: POST /orders
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK"
+}
+
+---
+
+## 7. Order History
+Endpoint: POST /orderhistory
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "otp": "220621000000097"
+}
+
+---
+
+## 8. Trades
+Endpoint: POST /trades
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK"
+}
+
+---
+
+## 9. Place Order
+Endpoint: POST /placeorder
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "am": "NO",
+  "dq": "0",
+  "es": "nse_cm",
+  "mp": "0",
+  "pc": "CNC",
+  "pf": "N",
+  "pr": "6.50",
+  "pt": "L",
+  "qt": "1",
+  "rt": "DAY",
+  "tp": "0",
+  "ts": "IDEA-EQ",
+  "tt": "B"
+}
+
+---
+
+## 10. Modify Order
+Endpoint: POST /modifyorder
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "tk": "14366",
+  "mp": "0",
+  "pc": "CNC",
+  "dd": "NA",
+  "dq": "0",
+  "vd": "DAY",
+  "ts": "IDEA-EQ",
+  "tt": "B",
+  "pr": "3001",
+  "tp": "0",
+  "qt": "2",
+  "no": "240702002199220",
+  "es": "nse_cm",
+  "pt": "L"
+}
+
+---
+
+## 11. Cancel Order
+Endpoint: POST /cancelorder
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "on": "220621000000097",
+  "am": "NO",
+  "ts": "IDEA-EQ"
+}
+
+---
+
+## 12. Exit Cover Order
+Endpoint: POST /exitcoverorder
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "am": "NO",
+  "on": "250325000321343"
+}
+
+---
+
+## 13. Exit Bracket Order
+Endpoint: POST /exitbracketorder
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "am": "NO",
+  "on": "250325000324313"
+}
+
+---
+
+## 14. Limits
+Endpoint: POST /limits
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "seg": "CASH",
+  "exch": "NSE",
+  "prod": "ALL"
+}
+
+---
+
+## 15. Check Margin
+Endpoint: POST /checkmargin
+
+Request Payload:
+{
+  "accessBrokerToken": "jwt_token_from_verify_otp",
+  "brokerCode": "KOTAK",
+  "brkName": "KOTAK",
+  "brnchId": "ONLINE",
+  "exSeg": "nse_cm",
+  "prc": "12500",
+  "prcTp": "L",
+  "prod": "CNC",
+  "qty": "1",
+  "tok": "11536",
+  "trnsTp": "B",
+  "slAbsOrTks": "Absolute",
+  "slVal": "100",
+  "sqrOffAbsOrTks": "Absolute",
+  "sqrOffVal": "200",
+  "trailSL": "Y",
+  "trgPrc": "12000",
+  "tSLTks": "Y"
+}
+
+---
+
+## Response Format (All APIs)
+{
+  "status": "success",
+  "message": "Operation completed successfully",
+  "data": { /* API specific data */ },
+  "token": "jwt_token_if_applicable",
+  "success": true
+}
+
+---
+
+## Field Descriptions
+
+### Place Order Fields:
+- am: After Market (NO/YES)
+- dq: Disclosed Quantity
+- es: Exchange Segment (nse_cm, bse_cm)
+- mp: Market Protection
+- pc: Product Code (CNC, MIS, NRML)
+- pf: Price Flag
+- pr: Price
+- pt: Price Type (L=Limit, M=Market)
+- qt: Quantity
+- rt: Retention Type (DAY, IOC)
+- tp: Trigger Price
+- ts: Trading Symbol
+- tt: Transaction Type (B=Buy, S=Sell)
+
+### Modify Order Fields:
+- tk: Token
+- no: Order Number
+- vd: Validity (DAY, IOC)
+- dd: Disclosed Quantity
+
+### Cancel Order Fields:
+- on: Order Number
+- am: After Market (optional)
+- ts: Trading Symbol (optional)
+
+### Margin Check Optional Fields:
+- slAbsOrTks: Stop loss type (Absolute/Ticks) - for BO
+- slVal: Stop Loss Value - for BO
+- sqrOffAbsOrTks: Square Off type (Absolute/Ticks) - for BO
+- sqrOffVal: Square off value - for BO
+- trailSL: Trailing Stop Loss (Y/N) - for BO
+- trgPrc: Trigger price - for CO orders
+- tSLTks: Trailing SL value (Y/N) - for BO
