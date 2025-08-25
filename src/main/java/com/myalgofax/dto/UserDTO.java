@@ -1,5 +1,7 @@
 package com.myalgofax.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public class UserDTO {
 	
 	
@@ -13,6 +15,14 @@ public class UserDTO {
     private boolean active = true;
     
     public String password;
+    
+    public String mpin;
+    
+    @JsonProperty("newMpin")
+    public String newMpin;
+    
+    @JsonProperty("confirmMpin")
+    public String confirmMpin;
     
 	
 	public String getEmail() {
@@ -50,6 +60,30 @@ public class UserDTO {
 	}
 	public void setActive(boolean active) {
 		this.active = active;
+	}
+	public String getMpin() {
+		return mpin;
+	}
+	public void setMpin(String mpin) {
+		this.mpin = mpin;
+	}
+	public String getNewMpin() {
+		return newMpin;
+	}
+	public void setNewMpin(String newMpin) {
+		this.newMpin = newMpin;
+	}
+	public String getConfirmMpin() {
+		return confirmMpin;
+	}
+	public void setConfirmMpin(String confirmMpin) {
+		this.confirmMpin = confirmMpin;
+	}
+	@Override
+	public String toString() {
+		return "UserDTO [firstName=" + firstName + ", lastName=" + lastName + ", userId=" + userId + ", email=" + email
+				+ ", active=" + active + ", password=" + password + ", mpin=" + mpin + ", newMpin=" + newMpin
+				+ ", confirmMpin=" + confirmMpin + "]";
 	}
     
     

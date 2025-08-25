@@ -36,6 +36,10 @@ public class User {
     @Column("password")
     private String password;
 
+    @JsonIgnore
+    @Column("mpin")
+    private String mpin;
+
     @Column("active")
     private boolean active = true;
 
@@ -155,6 +159,14 @@ public class User {
 
 	public void setActive(boolean active) {
 		this.active = active;
+	}
+
+	public String getMpin() {
+		return mpin;
+	}
+
+	public void setMpin(String mpin) {
+		this.mpin = mpin;
 	}
 
 	public LocalDateTime getCreatedAt() {

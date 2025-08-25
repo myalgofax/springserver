@@ -54,7 +54,7 @@ public class SecurityConfig {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable) // Disabled for API-only usage with JWT authentication
                 .authorizeExchange(exchanges -> exchanges
-                        .pathMatchers("/api/auth/register","/api/auth/login",
+                        .pathMatchers("/api/auth/register","/api/auth/login","/api/auth/mpin-login","/api/auth/set-mpin","/api/auth/refresh-token",
                         		"/api/scrips/*",
                         		"/api/auth/logout",
                         		"/ws/**").permitAll()

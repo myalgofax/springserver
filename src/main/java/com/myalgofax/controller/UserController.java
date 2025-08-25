@@ -3,6 +3,9 @@ package com.myalgofax.controller;
 import java.util.Map;
 
 import org.slf4j.Logger;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -19,6 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 import com.myalgofax.api.responce.ApiResponse;
 import com.myalgofax.dto.UserDTO;
 import com.myalgofax.repository.BrokerRepository;
+import com.myalgofax.security.TokenBlacklistService;
+import com.myalgofax.security.util.jwt.JwtUtil;
 import com.myalgofax.service.UserService;
 import com.myalgofax.user.entity.User;
 
@@ -38,6 +43,12 @@ public class UserController {
 
 	@Autowired
 	private BrokerRepository brokerRepository;
+	
+	@Autowired
+	private TokenBlacklistService tokenBlacklistService;
+	
+	@Autowired
+	private JwtUtil jwtUtil;
     
     
 
@@ -124,11 +135,23 @@ public class UserController {
     }
 	
 	 @PostMapping("/logout")
-	    public Mono<ResponseEntity<ApiResponse<Object>>> logout() {
+	    public Mono<ResponseEntity<ApiResponse<Object>>> logout(@RequestBody(required = false) Map<String, String> request) {
 	        return ReactiveSecurityContextHolder.getContext()
 	            .map(ctx -> (String) ctx.getAuthentication().getCredentials())
 	            .flatMap(userId -> 
 	                Mono.fromCallable(() -> {
+	                    // Blacklist the token if provided
+	                    if (request != null && request.containsKey("token")) {
+	                        String token = request.get("token");
+	                        try {
+	                            Claims claims = jwtUtil.validateAndExtractClaims(token);
+	                            if (claims != null) {
+	                                tokenBlacklistService.blacklistToken(token, claims.getExpiration().getTime());
+	                            }
+	                        } catch (Exception e) {
+	                            logger.warn("Failed to blacklist token", e);
+	                        }
+	                    }
 	                    brokerRepository.resetBrokerTokensByUserId(userId);
 	                    return "Logged out successfully";
 	                })
@@ -140,7 +163,124 @@ public class UserController {
 	                return Mono.just(ResponseEntity.ok(new ApiResponse<>("success", "Logged out", null, null, true)));
 	            });
 	    }
-	
-	
+
+	@PostMapping("/mpin-login")
+	public Mono<ResponseEntity<ApiResponse<User>>> mpinLogin(@RequestBody Map<String, String> requestMap) {
+		logger.info("MPIN Login raw request: {}", requestMap);
+		
+		UserDTO request = new UserDTO();
+		request.setEmail(requestMap.get("email"));
+		request.setMpin(requestMap.get("mpin"));
+		
+		logger.debug("Enter in MPIN Login method");
+		
+		return userService.mpinLogin(request)
+			.map(loginData -> {
+				String token = (String) loginData.get("token");
+				User user = (User) loginData.get("user");
+				
+				ApiResponse<User> response = new ApiResponse<>(
+					"success",
+					"User logged in successfully with MPIN.",
+					user,
+					token,
+					false
+				);
+				
+				logger.info("MPIN login successful - returning response with token",response);
+				return ResponseEntity.ok()
+					.header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+					.body(response);
+			})
+			.onErrorResume(IllegalArgumentException.class, e -> {
+				logger.warn("MPIN login failed - invalid input: {}", e.getMessage());
+				ApiResponse<User> errorResponse = new ApiResponse<>(
+					"error",
+					"Invalid MPIN or MPIN not set",
+					null,
+					null,
+					false
+				);
+				return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse));
+			})
+			.onErrorResume(RuntimeException.class, e -> {
+				logger.error("MPIN login failed", e);
+				ApiResponse<User> errorResponse = new ApiResponse<>(
+					"error",
+					"MPIN login failed",
+					null,
+					null,
+					false
+				);
+				return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse));
+			});
+	}
+
+	@PostMapping("/set-mpin")
+	public Mono<ResponseEntity<ApiResponse<User>>> setMpin(@RequestBody Map<String, String> requestMap) {
+		logger.info("Raw request: {}", requestMap);
+		
+		UserDTO request = new UserDTO();
+		request.setEmail(requestMap.get("email"));
+		request.setMpin(requestMap.get("mpin"));
+		
+		logger.debug("Enter in Set MPIN method");
+		logger.info("request data",request.getNewMpin());
+		logger.info("request getConfirmMpin: ",request.getConfirmMpin());
+		
+		return userService.setMpin(request)
+			.map(user -> {
+				ApiResponse<User> response = new ApiResponse<>(
+					"success",
+					"MPIN set successfully.",
+					user,
+					null,
+					false
+				);
+				return ResponseEntity.ok().body(response);
+			})
+			.onErrorResume(IllegalArgumentException.class, e -> {
+				logger.warn("Set MPIN failed - invalid input: {}", e.getMessage());
+				ApiResponse<User> errorResponse = new ApiResponse<>(
+					"error",
+					e.getMessage(),
+					null,
+					null,
+					false
+				);
+				return Mono.just(ResponseEntity.badRequest().body(errorResponse));
+			})
+			.onErrorResume(RuntimeException.class, e -> {
+				logger.error("Set MPIN failed", e);
+				ApiResponse<User> errorResponse = new ApiResponse<>(
+					"error",
+					"Failed to set MPIN",
+					null,
+					null,
+					false
+				);
+				return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse));
+			});
+	}
+
+	@PostMapping("/refresh-token")
+	public Mono<ResponseEntity<ApiResponse<String>>> refreshToken(@RequestBody Map<String, String> request) {
+		String token = request.get("token");
+		if (token == null) {
+			return Mono.just(ResponseEntity.badRequest()
+				.body(new ApiResponse<>("error", "Token required", null, null, false)));
+		}
+		
+		String newToken = jwtUtil.refreshToken(token);
+		if (newToken != null) {
+			tokenBlacklistService.blacklistToken(token, System.currentTimeMillis() + 86400000);
+			return Mono.just(ResponseEntity.ok()
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + newToken)
+				.body(new ApiResponse<>("success", "Token refreshed", newToken, newToken, false)));
+		}
+		
+		return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+			.body(new ApiResponse<>("error", "Invalid token", null, null, false)));
+	}
 	
 }

@@ -90,6 +90,57 @@ public class UserService {
             .switchIfEmpty(Mono.fromRunnable(() -> logger.warn("Login failed for email: {}", request.getEmail()))
                 .then(Mono.error(new RuntimeException("Invalid credentials"))));
     }
+
+    public Mono<Map<String, Object>> mpinLogin(UserDTO request) {
+        logger.debug("MPIN login attempt for email: {}", request.getEmail());
+        logger.debug("Received MPIN: {}", request.getMpin());
+        
+        if (request.getMpin() == null || request.getMpin().length() != 64) {
+            return Mono.error(new IllegalArgumentException("Invalid MPIN format"));
+        }
+        
+        return userRepository.findByEmail(request.getEmail())
+            .doOnNext(user -> logger.debug("Found user with stored MPIN: {}", user.getMpin() != null ? "exists" : "null"))
+            .filter(user -> {
+                boolean mpinExists = user.getMpin() != null;
+                boolean mpinMatches = mpinExists && encoder.matches(request.getMpin(), user.getMpin());
+                logger.debug("MPIN exists: {}, MPIN matches: {}", mpinExists, mpinMatches);
+                return mpinMatches;
+            })
+            .map(user -> {
+                String token = jwtUtil.generateToken(user.getEmail(), user.getUserId());
+                logger.info("MPIN login successful for user: {}", user.getUserId());
+                
+                Map<String, Object> response = new HashMap<>();
+                response.put("user", user);
+                response.put("token", token);
+                
+                return response;
+            })
+            .switchIfEmpty(Mono.fromRunnable(() -> logger.warn("MPIN login failed for email: {}", request.getEmail()))
+                .then(Mono.error(new RuntimeException("Invalid MPIN or MPIN not set"))));
+    }
+
+    public Mono<User> setMpin(UserDTO request) {
+        logger.debug("Setting MPIN for user: {}", request.toString());
+        
+        String mpin = request.getMpin();
+        
+        if (mpin == null) {
+            return Mono.error(new IllegalArgumentException("MPIN is required"));
+        }
+        
+        if (mpin.length() != 64) {
+            return Mono.error(new IllegalArgumentException("Invalid MPIN format"));
+        }
+        
+        return userRepository.findByEmail(request.getEmail())
+            .flatMap(user -> {
+                user.setMpin(encoder.encode(mpin));
+                return userRepository.save(user);
+            })
+            .switchIfEmpty(Mono.error(new RuntimeException("User not found")));
+    }
     
     private Mono<String> generateUniqueUserId() {
         String characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789";

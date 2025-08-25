@@ -14,6 +14,10 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 
+import com.myalgofax.security.AuthenticationService;
+import com.myalgofax.security.TokenBlacklistService;
+
+import io.jsonwebtoken.Claims;
 import reactor.core.publisher.Mono;
 
 @Component
@@ -21,6 +25,12 @@ public class JwtFilter implements WebFilter {
 	private static final Logger logger = LoggerFactory.getLogger(JwtUtil.class);
     @Autowired
     private JwtUtil jwtUtil;
+    
+    @Autowired
+    private TokenBlacklistService tokenBlacklistService;
+    
+    @Autowired
+    private AuthenticationService authService;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
@@ -28,22 +38,35 @@ public class JwtFilter implements WebFilter {
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
-            try {
-                if (jwtUtil.validateToken(token)) {
-                    String email = jwtUtil.extractEmail(token);
-                    String userId = jwtUtil.extractUserId(token);
-                    
-                    if (email != null && userId != null) {
-                        logger.debug("JWT authentication successful");
-                        UsernamePasswordAuthenticationToken authentication =
-                                new UsernamePasswordAuthenticationToken(email, userId, Collections.emptyList());
-
-                        return chain.filter(exchange)
-                                .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(Mono.just(new SecurityContextImpl(authentication))));
-                    }
+            
+            if (tokenBlacklistService.isTokenBlacklisted(token)) {
+                return chain.filter(exchange);
+            }
+            
+            Claims claims = jwtUtil.validateAndExtractClaims(token);
+            if (claims != null) {
+                String email = claims.getSubject();
+                String userId = claims.get("userId", String.class);
+                
+                if (email != null && userId != null) {
+                    return authService.isUserActiveAndValid(email, userId)
+                        .flatMap(isValid -> {
+                            if (isValid) {
+                                logger.debug("JWT authentication successful for user: {}", userId);
+                                UsernamePasswordAuthenticationToken authentication =
+                                    new UsernamePasswordAuthenticationToken(email, userId, Collections.emptyList());
+                                return chain.filter(exchange)
+                                    .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(Mono.just(new SecurityContextImpl(authentication))));
+                            } else {
+                                logger.warn("User validation failed for: {}", email);
+                                return chain.filter(exchange);
+                            }
+                        })
+                        .onErrorResume(e -> {
+                            logger.debug("User validation error", e);
+                            return chain.filter(exchange);
+                        });
                 }
-            } catch (Exception e) {
-                logger.debug("JWT processing failed", e);
             }
         }
 

@@ -19,6 +19,8 @@ import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+
+
 import jakarta.annotation.PostConstruct;
 
 @Component
@@ -37,8 +39,10 @@ public class JwtUtil {
 
 	@PostConstruct
 	public void init() {
-		byte[] keyBytes = Base64.getEncoder().encode(secret.getBytes());
-		this.key = Keys.hmacShaKeyFor(keyBytes);
+		if (secret.length() < 32) {
+			throw new IllegalArgumentException("JWT secret must be at least 32 characters");
+		}
+		this.key = Keys.hmacShaKeyFor(secret.getBytes());
 	}
 
 	public String generateToken(String email, String userId) {
@@ -95,22 +99,44 @@ public class JwtUtil {
 
 	public String extractUserId(String token) {
 		try {
-			return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody().get("userId",
-					String.class);
+			return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody().get("userId", String.class);
 		} catch (JwtException e) {
 			logger.debug("Failed to extract userId from token", e);
 			return null;
 		}
 	}
 
-	public boolean validateToken(String token) {
+	public Claims validateAndExtractClaims(String token) {
 		try {
-			Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
-			return true;
+			return Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody();
 		} catch (JwtException e) {
 			logger.debug("Token validation failed", e);
-			return false;
+			return null;
 		}
+	}
+
+	public boolean validateToken(String token) {
+		return validateAndExtractClaims(token) != null;
+	}
+
+	public String refreshToken(String token) {
+		Claims claims = validateAndExtractClaims(token);
+		if (claims != null) {
+			String email = claims.getSubject();
+			String userId = claims.get("userId", String.class);
+			return generateToken(email, userId);
+		}
+		return null;
+	}
+
+	public boolean isTokenExpiringSoon(String token) {
+		Claims claims = validateAndExtractClaims(token);
+		if (claims != null) {
+			long expirationTime = claims.getExpiration().getTime();
+			long currentTime = System.currentTimeMillis();
+			return (expirationTime - currentTime) < 300000; // 5 minutes
+		}
+		return false;
 	}
 
 }
