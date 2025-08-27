@@ -6,13 +6,15 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -35,11 +37,7 @@ import com.myalgofax.repository.BrokerRepository;
 import com.myalgofax.repository.UserRepository;
 import com.myalgofax.security.util.jwt.JwtDecoder;
 import com.myalgofax.security.util.jwt.JwtUtil;
-
 import com.myalgofax.user.entity.Broker;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import reactor.core.publisher.Mono;
 
@@ -62,8 +60,10 @@ public class BrokerService {
 	private UserRepository userRepository;
 
 	@Autowired
+	@Qualifier("oauthWebClient")
 	private WebClient webClient;
-
+	
+	
 	@Value("${kotak.api.oauth-url}")
 	private String oauthUrl;
 

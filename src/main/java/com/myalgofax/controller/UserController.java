@@ -12,6 +12,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,6 +25,7 @@ import com.myalgofax.dto.UserDTO;
 import com.myalgofax.repository.BrokerRepository;
 import com.myalgofax.security.TokenBlacklistService;
 import com.myalgofax.security.util.jwt.JwtUtil;
+import com.myalgofax.service.LogoutService;
 import com.myalgofax.service.UserService;
 import com.myalgofax.user.entity.User;
 
@@ -49,6 +51,9 @@ public class UserController {
 	
 	@Autowired
 	private JwtUtil jwtUtil;
+	
+	@Autowired
+	private  LogoutService logoutService;
     
     
 
@@ -134,35 +139,7 @@ public class UserController {
             });
     }
 	
-	 @PostMapping("/logout")
-	    public Mono<ResponseEntity<ApiResponse<Object>>> logout(@RequestBody(required = false) Map<String, String> request) {
-	        return ReactiveSecurityContextHolder.getContext()
-	            .map(ctx -> (String) ctx.getAuthentication().getCredentials())
-	            .flatMap(userId -> 
-	                Mono.fromCallable(() -> {
-	                    // Blacklist the token if provided
-	                    if (request != null && request.containsKey("token")) {
-	                        String token = request.get("token");
-	                        try {
-	                            Claims claims = jwtUtil.validateAndExtractClaims(token);
-	                            if (claims != null) {
-	                                tokenBlacklistService.blacklistToken(token, claims.getExpiration().getTime());
-	                            }
-	                        } catch (Exception e) {
-	                            logger.warn("Failed to blacklist token", e);
-	                        }
-	                    }
-	                    brokerRepository.resetBrokerTokensByUserId(userId);
-	                    return "Logged out successfully";
-	                })
-	                .subscribeOn(Schedulers.boundedElastic())
-	            )
-	            .map(message -> ResponseEntity.ok(new ApiResponse<>("success", message, null, null, true)))
-	            .onErrorResume(e -> {
-	                logger.error("Logout failed", e);
-	                return Mono.just(ResponseEntity.ok(new ApiResponse<>("success", "Logged out", null, null, true)));
-	            });
-	    }
+	 
 
 	@PostMapping("/mpin-login")
 	public Mono<ResponseEntity<ApiResponse<User>>> mpinLogin(@RequestBody Map<String, String> requestMap) {
@@ -283,4 +260,28 @@ public class UserController {
 			.body(new ApiResponse<>("error", "Invalid token", null, null, false)));
 	}
 	
+	
+	
+	
+	@PostMapping("/logout")
+    public Mono<ResponseEntity<ApiResponse<Object>>> logout(@RequestBody(required = false) Map<String, String> request) {
+        logger.info("enter in LOGOUT");
+		return ReactiveSecurityContextHolder.getContext()
+            .flatMap(securityContext -> {
+                Authentication authentication = securityContext.getAuthentication();
+                if (authentication == null || authentication.getCredentials() == null) {
+                    return Mono.error(new RuntimeException("No authentication found"));
+                }
+                
+                String userId = (String) authentication.getCredentials();
+                String token = request != null ? request.get("token") : null;
+                
+                return logoutService.processLogout(userId, token)
+                    .map(message -> ResponseEntity.ok(new ApiResponse<>("success", message, null, null, true)));
+            })
+            .onErrorResume(e -> {
+                logger.error("Logout failed", e);
+                return Mono.just(ResponseEntity.ok(new ApiResponse<>("success", "Logged out", null, null, true)));
+            });
+    }
 }

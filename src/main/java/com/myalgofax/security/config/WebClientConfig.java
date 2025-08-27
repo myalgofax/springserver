@@ -25,4 +25,22 @@ public class WebClientConfig {
 	        .clientConnector(new ReactorClientHttpConnector(HttpClient.create()))
 	        .build();
 	}
+	
+	
+	@Bean("oauthWebClient")
+    WebClient oauthWebClient() {
+        int sizeInBytes = 50 * 1024 * 1024; // 10MB buffer for OAuth (smaller since tokens are small)
+        
+        ExchangeStrategies strategies = ExchangeStrategies.builder()
+            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(sizeInBytes))
+            .build();
+
+        return WebClient.builder()
+            .exchangeStrategies(strategies)
+            .clientConnector(new ReactorClientHttpConnector(HttpClient.create()))
+            .defaultCookies(cookies -> cookies.clear()) // Clear all cookies for OAuth requests
+            .build();
+    }
 }
+	
+

@@ -447,9 +447,10 @@ public class KotakNeoService {
         try {
             String userToken = getCurrentUserToken();
             if (userToken != null) {
-                String kotakToken = jwtUtil.extractClaim(userToken, "kotakTokenStep2");
+                Map<String, Object> kotakToken = jwtUtil.decodeBrokerAccessToken(userToken);
                 if (kotakToken != null) {
-                    originalBody.put("kotakToken", kotakToken);
+                    originalBody.put("kotakToken", kotakToken.get("kotakTokenStep2"));
+                    originalBody.put("kotakTokenStep1", kotakToken.get("kotakTokenStep1"));
                 }
             }
         } catch (Exception e) {
