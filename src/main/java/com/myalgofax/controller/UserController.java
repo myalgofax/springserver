@@ -17,6 +17,7 @@ import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -264,8 +265,14 @@ public class UserController {
 	
 	
 	@PostMapping("/logout")
-    public Mono<ResponseEntity<ApiResponse<Object>>> logout(@RequestBody(required = false) Map<String, String> request) {
+    public Mono<ResponseEntity<ApiResponse<Object>>> logout(@RequestHeader("Authorization") String authHeader, @RequestBody(required = false) Map<String, String> request) {
         logger.info("enter in LOGOUT");
+        logger.info("enter in request",request.get("accessBrokerToken"));
+        
+     // Extract token from "Bearer <token>"
+        String authToken = authHeader.startsWith("Bearer ") ? 
+            authHeader.substring(7) : authHeader;
+        
 		return ReactiveSecurityContextHolder.getContext()
             .flatMap(securityContext -> {
                 Authentication authentication = securityContext.getAuthentication();
@@ -274,9 +281,9 @@ public class UserController {
                 }
                 
                 String userId = (String) authentication.getCredentials();
-                String token = request != null ? request.get("token") : null;
+                String token = request != null ? request.get("accessBrokerToken") : null;
                 
-                return logoutService.processLogout(userId, token)
+                return logoutService.processLogout(authToken,userId, token)
                     .map(message -> ResponseEntity.ok(new ApiResponse<>("success", message, null, null, true)));
             })
             .onErrorResume(e -> {

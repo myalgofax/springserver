@@ -40,11 +40,20 @@ public class LogoutService {
         this.jwtUtil = jwtUtil;
     }
 
-    public Mono<String> processLogout(String userId, String token) {
+    public Mono<String> processLogout(String authHeader, String loginId, String token) {
+    	
+    	Map<String, Object> brokerAccessToken = jwtUtil.decodeBrokerAccessToken(token);
+
+		String step1 = brokerAccessToken.get("kotakTokenStep1").toString();
+		String step2 = brokerAccessToken.get("kotakTokenStep2").toString();
+		String sid = brokerAccessToken.get("sid").toString().trim();
+		String userId = brokerAccessToken.get("userId").toString();
+
+    	
         return Mono.when(
-                processTokenBlacklisting(token),
+                processTokenBlacklisting(authHeader),
                 resetBrokerTokens(userId),
-                revokeOAuthToken(token)
+                revokeOAuthToken(step1,step2,sid)
             )
             .thenReturn("Logged out successfully");
     }
@@ -77,15 +86,12 @@ public class LogoutService {
             .then();
     }
 
-    private Mono<Map<String, String>> revokeOAuthToken(String token) {
-       
-    
-		Map<String, Object> brokerAccessToken = jwtUtil.decodeBrokerAccessToken(token);
+    private Mono<Map<String, String>> revokeOAuthToken(
+    		String step1,
+    		String step2,
+    		String sid
 
-		String step1 = brokerAccessToken.get("kotakTokenStep1").toString();
-		String step2 = brokerAccessToken.get("kotakTokenStep2").toString();
-		String sid = brokerAccessToken.get("sid").toString().trim();
-		String userId = brokerAccessToken.get("userId").toString();
+    		) {
 
         String revocationUrl = "https://napi.kotaksecurities.com/oauth2/revoke";
         
@@ -103,10 +109,13 @@ public class LogoutService {
             
             .retrieve()
             .bodyToMono(String.class)
+            .doOnNext(response -> logger.info("API Response: {}", response))
             .map(response -> Map.of("data", response))
-            .onErrorResume(BrokerApiException.class, ex -> 
-                Mono.just(Map.of("error", ex.getMessage()))
-            )
+            .doOnNext(result -> logger.debug("Processed result: {}", result))
+            .onErrorResume(BrokerApiException.class, ex -> {
+                logger.error("API Error: {}", ex.getMessage());
+                return Mono.just(Map.of("error", ex.getMessage()));
+            }).doOnError(BrokerApiException.class, ex -> logger.error("Broker API Exception occurred", ex))
             
             .onErrorResume(Exception.class, ex -> 
             Mono.just(Map.of("error", "Logout failed: " + ex.getMessage()))
